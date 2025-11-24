@@ -99,7 +99,7 @@ jobs:
             RESPONSE=$(curl -s http://$LB_HOST || true)
             echo "Attempt $i: $RESPONSE"
 
-            if echo "$RESPONSE" | grep -q "Hello from Project 1"; then
+            if echo "$RESPONSE" | grep -q "Project 1 - Nginx on EKS via GitHub Actions"; then
               echo "App is responding correctly!"
               exit 0
             fi
