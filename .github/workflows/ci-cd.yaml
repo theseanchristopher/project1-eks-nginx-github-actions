@@ -86,6 +86,8 @@ jobs:
           kubectl rollout status deployment/nginx-deployment -n $K8S_NAMESPACE --timeout=120s
 
       - name: Smoke test app via LoadBalancer
+        env:
+          K8S_NAMESPACE: ${{ secrets.K8S_NAMESPACE }}
         run: |
           LB_HOST=$(kubectl get svc nginx-service -n $K8S_NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           echo "Hitting http://$LB_HOST ..."
