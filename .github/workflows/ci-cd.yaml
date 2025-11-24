@@ -85,3 +85,19 @@ jobs:
           kubectl apply -n $K8S_NAMESPACE -f k8s/
           kubectl rollout status deployment/nginx-deployment -n $K8S_NAMESPACE --timeout=120s
 
+       - name: Smoke test service (debug)
+         env:
+           K8S_NAMESPACE: ${{ secrets.K8S_NAMESPACE }}
+         run: |
+           set -e
+
+           echo "Namespace: $K8S_NAMESPACE"
+
+           LB_HOST=$(kubectl get svc nginx-service -n "$K8S_NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+           echo "LB_HOST=$LB_HOST"
+
+           echo "Curling http://$LB_HOST ..."
+           # Don't use -f yet so we see body even on 404/500
+           curl -v "http://$LB_HOST" || echo "curl exited with code $?"
+
+
