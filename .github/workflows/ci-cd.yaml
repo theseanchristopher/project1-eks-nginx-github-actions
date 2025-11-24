@@ -70,6 +70,9 @@ jobs:
             --name ${{ secrets.EKS_CLUSTER_NAME }} \
             --region ${{ secrets.AWS_REGION }}
 
+      - name: Debug AWS identity
+  	run: aws sts get-caller-identity
+
       - name: Set image in deployment manifest
         env:
           ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
