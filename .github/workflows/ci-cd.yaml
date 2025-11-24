@@ -89,8 +89,23 @@ jobs:
         env:
           K8S_NAMESPACE: ${{ secrets.K8S_NAMESPACE }}
         run: |
+          set +e 
           echo "Namespace: $K8S_NAMESPACE"
           LB_HOST=$(kubectl get svc nginx-service -n "$K8S_NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           echo "LB_HOST=$LB_HOST"
-          echo "Curling http://$LB_HOST ..."
-          curl -v "http://$LB_HOST" || echo "curl exited with code $?"
+          echo "Waiting for LoadBalancer to become ready..."
+
+          for i in {1..20}; do
+            RESPONSE=$(curl -s http://$LB_HOST || true)
+            echo "Attempt $i: $RESPONSE"
+
+            if echo "$RESPONSE" | grep -q "Hello from Project 1"; then
+              echo "App is responding correctly!"
+              exit 0
+            fi
+
+            sleep 5
+          done
+
+          echo "App did not return expected content after multiple tries."
+          exit 1
