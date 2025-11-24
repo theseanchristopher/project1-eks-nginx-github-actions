@@ -78,10 +78,18 @@ jobs:
           IMAGE_TAG=${GITHUB_SHA}
           sed -i "s#IMAGE_PLACEHOLDER#$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG#g" k8s/deployment.yaml
 
-      - name: Apply Kubernetes manifests
+      - name: Apply Kubernetes manifests and wait for rollout to finish
         env:
           K8S_NAMESPACE: ${{ secrets.K8S_NAMESPACE }}
         run: |
           kubectl apply -n $K8S_NAMESPACE -f k8s/
-          kubectl rollout status deployment/nginx-deployment -n $K8S_NAMESPACE
+          kubectl rollout status deployment/nginx-deployment -n $K8S_NAMESPACE --timeout=120s
+
+      - name: Smoke test app via LoadBalancer
+        run: |
+          LB_HOST=$(kubectl get svc nginx-service \
+            -n $K8S_NAMESPACE \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          echo "Hitting http://$LB_HOST ..."
+          curl -sSf http://$LB_HOST | grep "Hello from Project 1"
 
