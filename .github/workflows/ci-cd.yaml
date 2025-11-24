@@ -87,7 +87,7 @@ jobs:
 
       - name: Smoke test app via LoadBalancer
         run: |
-          LB_HOST=$(kubectl get svc nginx-service -n $K8S_NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname})
+          LB_HOST=$(kubectl get svc nginx-service -n $K8S_NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           echo "Hitting http://$LB_HOST ..."
           curl -sSf http://$LB_HOST | grep "Hello from Project 1"
 
