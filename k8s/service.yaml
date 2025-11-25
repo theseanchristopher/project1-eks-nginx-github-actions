@@ -4,7 +4,8 @@ metadata:
   name: nginx-service
   namespace: project1
 spec:
-  type: LoadBalancer
+# type: LoadBalancer
+  type: ClusterIP
   selector:
     app: nginx
   ports:
