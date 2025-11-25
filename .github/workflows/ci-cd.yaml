@@ -85,7 +85,7 @@ jobs:
           kubectl apply -n $K8S_NAMESPACE -f k8s/
           kubectl rollout status deployment/nginx-deployment -n $K8S_NAMESPACE --timeout=120s
 
-      - name: Smoke test service
+      - name: Smoke test Ingress (w/HTTPS)
         env:
           K8S_NAMESPACE: ${{ secrets.K8S_NAMESPACE }}
         run: |
@@ -94,7 +94,7 @@ jobs:
           #LB_HOST=$(kubectl get svc nginx-service -n "$K8S_NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           LB_HOST=$(kubectl get ingress nginx-ingress -n "$K8S_NAMESPACE" -o jsonpath='{.spec.rules[0].host}')
           echo "LB_HOST=$LB_HOST"
-          echo "Waiting for LoadBalancer to become ready..."
+          echo "Waiting for app to become ready..."
 
           for i in {1..20}; do
             RESPONSE=$(curl -s https://$LB_HOST || true)
