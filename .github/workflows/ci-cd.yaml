@@ -2,21 +2,29 @@ name: CI/CD to EKS
 
 on:
   push:
+    # Run this pipeline only when changes are pushed to the main branch
     branches: [ main ]
+    # Limit triggers to application code, Kubernetes manifests, or workflow changes
     paths:
       - "app/**"
       - "k8s/**"
       - ".github/workflows/**"
 
 jobs:
+  # ------------------------------
+  # Job 1: Build and push Docker image to ECR
+  # ------------------------------
   build-and-push:
     name: Build and Push to ECR
     runs-on: ubuntu-latest
 
     steps:
+      # Check out the repository contents so the runner has access to app/ and k8s/
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Configure AWS credentials for this job using GitHub Actions secrets.
+      # These credentials are used by both the AWS CLI and Docker (via ECR auth).
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -24,6 +32,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # Authenticate the local Docker client to Amazon ECR so we can push images.
       - name: Login to Amazon ECR
         id: login-ecr
         run: |
@@ -32,26 +41,44 @@ jobs:
               --username AWS \
               --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
 
+      # Build the Docker image from app/, tag it with the commit SHA for traceability,
+      # and push it to the ECR repository configured for this project.
       - name: Build, tag, and push image
         env:
           ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
         run: |
+          # Use the Git commit SHA as an immutable image tag
           IMAGE_TAG=${GITHUB_SHA}
+
+          # Build the container image from the Dockerfile in app/
           docker build -t $ECR_REPOSITORY:latest ./app
+
+          # Retag the image with the full ECR registry/repository path + SHA tag
           docker tag $ECR_REPOSITORY:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+          # Push the SHA-tagged image to ECR
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+          # Optionally expose the full image reference as a step output (not consumed yet)
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
+  # ------------------------------
+  # Job 2: Deploy to EKS and run smoke test
+  # ------------------------------
   deploy:
     name: Deploy to EKS
     runs-on: ubuntu-latest
+
+    # Ensure the deployment only runs if the image build/push was successful
     needs: build-and-push
 
     steps:
+      # Check out the repo again on this fresh runner instance
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Configure AWS credentials for talking to EKS and other AWS APIs
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -59,54 +86,76 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # Install kubectl so we can apply manifests and query Kubernetes objects
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
         with:
           version: "latest"
 
+      # Populate kubeconfig with the EKS cluster endpoint and credentials.
+      # This allows kubectl to authenticate to the correct EKS cluster.
       - name: Update kubeconfig for EKS cluster
         run: |
           aws eks update-kubeconfig \
             --name ${{ secrets.EKS_CLUSTER_NAME }} \
             --region ${{ secrets.AWS_REGION }}
 
+      # Update the Kubernetes Deployment manifest to use the newly built image.
+      # We replace a placeholder in deployment.yaml with the SHA-tagged image URI.
       - name: Set image in deployment manifest
         env:
           ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
         run: |
           IMAGE_TAG=${GITHUB_SHA}
+
+          # Replace IMAGE_PLACEHOLDER in k8s/deployment.yaml with the full image reference
           sed -i "s#IMAGE_PLACEHOLDER#$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG#g" k8s/deployment.yaml
 
+      # Apply all Kubernetes manifests to the target namespace and wait for the rollout.
+      # This ensures the deployment is healthy before we run the smoke test.
       - name: Apply Kubernetes manifests and wait for rollout to finish
         env:
           K8S_NAMESPACE: ${{ secrets.K8S_NAMESPACE }}
         run: |
+          # Apply all manifests in the k8s/ directory to the specified namespace
           kubectl apply -n $K8S_NAMESPACE -f k8s/
+
+          # Wait for the nginx deployment to finish rolling out
           kubectl rollout status deployment/nginx-deployment -n $K8S_NAMESPACE --timeout=120s
 
-      - name: Smoke test Ingress (w/HTTPS)
+      # Perform a simple HTTPS smoke test against the Ingress host.
+      # This validates that the app is reachable over HTTPS and serving the expected content.
+      - name: Smoke test service via Ingress
         env:
           K8S_NAMESPACE: ${{ secrets.K8S_NAMESPACE }}
+          EXPECTED_CONTENT: "Project 1 - Nginx on EKS via GitHub Actions"
         run: |
-          set +e 
+          set +e  # Do not exit immediately on errors; we handle failures explicitly.
+
           echo "Namespace: $K8S_NAMESPACE"
-          #LB_HOST=$(kubectl get svc nginx-service -n "$K8S_NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          echo "Expected content: $EXPECTED_CONTENT"
+
+          # Retrieve the host configured on the Ingress (e.g., project1.seanxtopher.com)
           LB_HOST=$(kubectl get ingress nginx-ingress -n "$K8S_NAMESPACE" -o jsonpath='{.spec.rules[0].host}')
           echo "LB_HOST=$LB_HOST"
-          echo "Waiting for app to become ready..."
+          echo "Waiting for HTTPS endpoint to become ready..."
 
+          # Retry loop to allow DNS/ALB propagation and pod readiness
           for i in {1..20}; do
-            RESPONSE=$(curl -s https://$LB_HOST || true)
+            # -s: silent, -S: show error, --fail: non-zero on HTTP errors
+            RESPONSE=$(curl -sS --fail https://$LB_HOST || true)
             echo "Attempt $i: $RESPONSE"
 
-            if echo "$RESPONSE" | grep -q "Project 1 - Nginx on EKS via GitHub Actions"; then
-              echo "App is responding correctly!"
+            # Look for a known string from the custom landing page to confirm success
+            if echo "$RESPONSE" | grep -q "$EXPECTED_CONTENT"; then
+              echo "App is responding correctly over HTTPS!"
               exit 0
             fi
 
             sleep 5
           done
 
-          echo "App did not return expected content after multiple tries."
+          echo "App did not return the expected content after multiple attempts."
           exit 1
+
