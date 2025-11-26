@@ -9,7 +9,8 @@ This project demonstrates proficient use of a CI/CD pipeline in a cloud-based, c
 ## Architecture Overview
 
 This project combines a GitHub Actions CI/CD pipeline with an Amazon EKS cluster running on a managed node group. Application images are built and stored in Amazon ECR, then deployed to a dedicated Kubernetes namespace in EKS. At runtime, traffic flows through an AWS Application Load Balancer (when the Ingress is enabled), which terminates HTTPS using an ACM certificate and routes requests to the Nginx application running inside the cluster.
-
+````md
+```mermaid
 flowchart LR
     subgraph Dev["CI/CD Pipeline"]
         DevUser["Developer"]
@@ -52,7 +53,7 @@ flowchart LR
     ALB --> ACM
     DNS --> User
     User -->|"HTTPS (443)"| ALB
-
+```
 ## Features
 
 - **Fully automated CI/CD pipeline** using GitHub Actions.
@@ -70,6 +71,7 @@ flowchart LR
 - **Scalable, production-style architecture** closely resembling real-world DevOps workflows.
 
 ## Repository Structure
+```txt
 .
 ├── app/
 │   ├── Dockerfile              # Builds the container image with a custom landing page
@@ -84,7 +86,7 @@ flowchart LR
 └── .github/
     └── workflows/
         └── ci-cd.yaml          # GitHub Actions CI/CD pipeline
-
+```
 This repository is organized into three main components:
 
 - **app/** contains the Dockerfile and the custom `index.html` landing page used to build the web application image.
