@@ -158,4 +158,3 @@ jobs:
 
           echo "App did not return the expected content after multiple attempts."
           exit 1
-
