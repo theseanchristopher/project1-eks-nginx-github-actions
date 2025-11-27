@@ -95,9 +95,11 @@ jobs:
       # Populate kubeconfig with the EKS cluster endpoint and credentials.
       # This allows kubectl to authenticate to the correct EKS cluster.
       - name: Update kubeconfig for EKS cluster
+        env:
+          EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME_PROJECT2 }}
         run: |
           aws eks update-kubeconfig \
-            --name ${{ secrets.EKS_CLUSTER_NAME }} \
+            --name $EKS_CLUSTER_NAME \
             --region ${{ secrets.AWS_REGION }}
 
       # Update the Kubernetes Deployment manifest to use the newly built image.
