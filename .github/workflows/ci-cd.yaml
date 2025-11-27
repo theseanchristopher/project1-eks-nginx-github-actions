@@ -3,7 +3,7 @@ name: CI/CD to EKS
 on:
   push:
     # Run this pipeline only when changes are pushed to the main branch
-    branches: [ main ]
+    branches: [ main, project2-eks ]
     # Limit triggers to application code, Kubernetes manifests, or workflow changes
     paths:
       - "app/**"
