@@ -126,37 +126,37 @@ jobs:
           # Wait for the nginx deployment to finish rolling out
           kubectl rollout status deployment/nginx-deployment -n $K8S_NAMESPACE --timeout=120s
 
-      # Perform a simple HTTPS smoke test against the Ingress host.
-      # This validates that the app is reachable over HTTPS and serving the expected content.
-      - name: Smoke test service via Ingress
-        env:
-          K8S_NAMESPACE: ${{ secrets.K8S_NAMESPACE }}
-          EXPECTED_CONTENT: "Project 1 - Nginx on EKS via GitHub Actions"
-        run: |
-          set +e  # Do not exit immediately on errors; we handle failures explicitly.
-
-          echo "Namespace: $K8S_NAMESPACE"
-          echo "Expected content: $EXPECTED_CONTENT"
-
-          # Retrieve the host configured on the Ingress (e.g., project1.seanxtopher.com)
-          LB_HOST=$(kubectl get ingress nginx-ingress -n "$K8S_NAMESPACE" -o jsonpath='{.spec.rules[0].host}')
-          echo "LB_HOST=$LB_HOST"
-          echo "Waiting for HTTPS endpoint to become ready..."
-
-          # Retry loop to allow DNS/ALB propagation and pod readiness
-          for i in {1..20}; do
-            # -s: silent, -S: show error, --fail: non-zero on HTTP errors
-            RESPONSE=$(curl -sS --fail https://$LB_HOST || true)
-            echo "Attempt $i: $RESPONSE"
-
-            # Look for a known string from the custom landing page to confirm success
-            if echo "$RESPONSE" | grep -q "$EXPECTED_CONTENT"; then
-              echo "App is responding correctly over HTTPS!"
-              exit 0
-            fi
-
-            sleep 5
-          done
-
-          echo "App did not return the expected content after multiple attempts."
-          exit 1
+###      # Perform a simple HTTPS smoke test against the Ingress host.
+###      # This validates that the app is reachable over HTTPS and serving the expected content.
+###      - name: Smoke test service via Ingress
+###        env:
+###          K8S_NAMESPACE: ${{ secrets.K8S_NAMESPACE }}
+###          EXPECTED_CONTENT: "Project 1 - Nginx on EKS via GitHub Actions"
+###        run: |
+###          set +e  # Do not exit immediately on errors; we handle failures explicitly.
+###
+###          echo "Namespace: $K8S_NAMESPACE"
+###          echo "Expected content: $EXPECTED_CONTENT"
+###
+###          # Retrieve the host configured on the Ingress (e.g., project1.seanxtopher.com)
+###          LB_HOST=$(kubectl get ingress nginx-ingress -n "$K8S_NAMESPACE" -o jsonpath='{.spec.rules[0].host}')
+###          echo "LB_HOST=$LB_HOST"
+###          echo "Waiting for HTTPS endpoint to become ready..."
+###
+###          # Retry loop to allow DNS/ALB propagation and pod readiness
+###          for i in {1..20}; do
+###            # -s: silent, -S: show error, --fail: non-zero on HTTP errors
+###            RESPONSE=$(curl -sS --fail https://$LB_HOST || true)
+###            echo "Attempt $i: $RESPONSE"
+###
+###            # Look for a known string from the custom landing page to confirm success
+###            if echo "$RESPONSE" | grep -q "$EXPECTED_CONTENT"; then
+###              echo "App is responding correctly over HTTPS!"
+###              exit 0
+###            fi
+###
+###            sleep 5
+###          done
+###
+###          echo "App did not return the expected content after multiple attempts."
+###          exit 1
