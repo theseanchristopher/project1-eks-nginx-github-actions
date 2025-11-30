@@ -118,6 +118,9 @@ jobs:
         env:
           K8S_NAMESPACE: ${{ secrets.K8S_NAMESPACE }}
         run: |
+          # Ensure target namespace exists or create.
+          kubectl get namespace "$K8S_NAMESPACE" || kubectl create namespace "$K8S_NAMESPACE"
+
           # Apply all manifests in the k8s/ directory to the specified namespace
           kubectl apply -n $K8S_NAMESPACE -f k8s/
 
