@@ -1,9 +1,34 @@
+# ==========================================================================================
+# GitHub Actions Workflow – Branch Strategy Overview
+#
+# This repository supports two parallel deployment models for the same application:
+#
+#   1. **main branch**  → Traditional push-based CI/CD
+#      ------------------------------------------------
+#      - Builds and pushes the application image to ECR.
+#      - Deploys directly to the EKS cluster using kubectl.
+#      - Represents the classic CI/CD model from Project 1.
+#      - No interaction with the Project 3 GitOps repo.
+#
+#   2. **project3-gitops branch**  → GitOps-based CI/CD (Project 3 Integration)
+#      ------------------------------------------------------------------------
+#      - Builds and pushes the application image to ECR (same as main).
+#      - After pushing the image, updates the Project 3 GitOps repo
+#            (theseanchristopher/project3-app-config)
+#        by modifying the Kustomize `newTag:` field in the prod overlay.
+#      - Argo CD automatically detects this Git commit, syncs the change,
+#        and deploys the new image to the EKS cluster using pull-based CD.
+#      - Job 2 (direct kubectl deployment) is disabled or removed on this branch,
+#        because GitOps manages all deployments.
+#
+# ==========================================================================================
+
 name: CI/CD to EKS
 
 on:
   push:
-    # Run this pipeline only when changes are pushed to the main branch
-    branches: [ main ]
+    # Run this pipeline when changes are pushed to the project3-gitops branch
+    branches: [ project3-gitops ]
     # Limit triggers to application code, Kubernetes manifests, or workflow changes
     paths:
       - "app/**"
@@ -63,10 +88,54 @@ jobs:
           # Optionally expose the full image reference as a step output (not consumed yet)
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
+      # ---------------------------------------------
+      # Update Project 3 GitOps repo with the new image tag.
+      #
+      # This step connects Project 1's CI pipeline to Project 3's GitOps configuration.
+      # After building and pushing the application image to ECR, we update the Kustomize
+      # 'newTag:' field in the Project 3 overlay. Argo CD automatically detects this Git
+      # commit and syncs the new image version into the EKS cluster (pull-based CD).
+      #
+      # IMPORTANT:
+      # - Uses a PAT stored in PROJECT3_REPO_PAT (never hard-coded).
+      # - Updates only the Project 3 repo—NO changes occur to Project 1 manifests.
+      # - This step enables fully automated CI → GitOps → Argo CD → EKS deployment.
+      # ---------------------------------------------
+      - name: Update Project 3 GitOps repo with new image tag
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          GITHUB_TOKEN_PROJECT3: ${{ secrets.PROJECT3_REPO_PAT }}
+        run: |
+          echo "Cloning Project 3 GitOps repo..."
+          git clone https://github.com/theseanchristopher/project3-app-config.git
+          cd project3-app-config
+
+          echo "Updating Kustomize image tag to ${IMAGE_TAG}..."
+          sed -i "s/^    newTag:.*/    newTag: ${IMAGE_TAG}/" overlays/prod/kustomization.yaml
+
+          echo "Configuring git author..."
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          if git diff --quiet; then
+            echo "No changes to commit (tag already ${IMAGE_TAG})."
+            exit 0
+          fi
+
+          git add overlays/prod/kustomization.yaml
+          git commit -m "Update prod image tag to ${IMAGE_TAG} [ci skip]"
+
+          echo "Pushing changes to Project 3 repo..."
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN_PROJECT3}@github.com/theseanchristopher/project3-app-config.git
+          git push origin main
+
   # ------------------------------
   # Job 2: Deploy to EKS and run smoke test
   # ------------------------------
   deploy:
+    # Only execute on the 'main' branch.
+    if: github.ref == 'refs/heads/main'
+
     name: Deploy to EKS
     runs-on: ubuntu-latest
 
