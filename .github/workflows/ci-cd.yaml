@@ -15,7 +15,7 @@
 #      - Builds and pushes the application image to ECR (same as main).
 #      - After pushing the image, updates the Project 3 GitOps repo
 #            (theseanchristopher/project3-app-config)
-#        by modifying the Kustomize `newTag:` field in the prod overlay.
+#        by modifying the Kustomize `newTag:` field in the dev overlay.
 #      - Argo CD automatically detects this Git commit, syncs the change,
 #        and deploys the new image to the EKS cluster using pull-based CD.
 #      - Job 2 (direct kubectl deployment) is disabled or removed on this branch,
@@ -101,33 +101,26 @@ jobs:
       # - Updates only the Project 3 repo—NO changes occur to Project 1 manifests.
       # - This step enables fully automated CI → GitOps → Argo CD → EKS deployment.
       # ---------------------------------------------
-      - name: Update Project 3 GitOps repo with new image tag
+      - name: Update dev overlay in project3-app-config
         env:
           IMAGE_TAG: ${{ github.sha }}
-          GITHUB_TOKEN_PROJECT3: ${{ secrets.PROJECT3_REPO_PAT }}
+          GITOPS_REPO: theseanchristopher/project3-app-config
+          GITOPS_BRANCH: main
+          GITOPS_PAT: ${{ secrets.PROJECT3_GITOPS_PAT }}
         run: |
-          echo "Cloning Project 3 GitOps repo..."
-          git clone https://github.com/theseanchristopher/project3-app-config.git
+          # Clone the GitOps repo using PAT for authentication
+          git clone https://$GITOPS_PAT@github.com/$GITOPS_REPO.git
           cd project3-app-config
 
-          echo "Updating Kustomize image tag to ${IMAGE_TAG}..."
-          sed -i "s/^    newTag:.*/    newTag: ${IMAGE_TAG}/" overlays/prod/kustomization.yaml
+          git checkout $GITOPS_BRANCH
 
-          echo "Configuring git author..."
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          # Update ONLY the dev overlay tag (sed version)
+          sed -i "/name: project1-nginx/,/name:/s/newTag:.*/    newTag: ${IMAGE_TAG}/" overlays/dev/kustomization.yaml
 
-          if git diff --quiet; then
-            echo "No changes to commit (tag already ${IMAGE_TAG})."
-            exit 0
-          fi
-
-          git add overlays/prod/kustomization.yaml
-          git commit -m "Update prod image tag to ${IMAGE_TAG} [ci skip]"
-
-          echo "Pushing changes to Project 3 repo..."
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN_PROJECT3}@github.com/theseanchristopher/project3-app-config.git
-          git push origin main
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git commit -am "Update dev image tag to ${IMAGE_TAG}" || echo "No changes to commit"
+          git push origin $GITOPS_BRANCH
 
   # ------------------------------
   # Job 2: Deploy to EKS and run smoke test
