@@ -106,7 +106,7 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
           GITOPS_REPO: theseanchristopher/project3-app-config
           GITOPS_BRANCH: main
-          GITOPS_PAT: ${{ secrets.PROJECT3_GITOPS_PAT }}
+          GITOPS_PAT: ${{ secrets.PROJECT3_REPO_PAT }}
         run: |
           # Clone the GitOps repo using PAT for authentication
           git clone https://$GITOPS_PAT@github.com/$GITOPS_REPO.git
