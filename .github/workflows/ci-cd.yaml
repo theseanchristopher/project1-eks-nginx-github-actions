@@ -120,6 +120,9 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git commit -am "Update dev image tag to ${IMAGE_TAG}" || echo "No changes to commit"
+
+          # Authenticate Git remote using PAT
+          git remote set-url origin https://$GITOPS_PAT@github.com/$GITOPS_REPO.git
           git push origin $GITOPS_BRANCH
 
   # ------------------------------
