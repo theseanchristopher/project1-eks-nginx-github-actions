@@ -235,7 +235,6 @@ Several enhancements can extend this project toward a full production-grade plat
 These additions would align the project even more closely with enterprise DevOps patterns.
 
 
-## Project Summary (Resume Ready)
+## Project Summary
 
 Built a full CI/CD pipeline that deploys a containerized web application to Amazon EKS using GitHub Actions, Amazon ECR, and Kubernetes best practices. The solution includes namespace isolation, automated image tagging, rolling updates, horizontal pod autoscaling (HPA), and optional HTTPS ingress through an AWS Application Load Balancer secured with ACM. This project demonstrates practical experience with cloud-based infrastructure, Kubernetes orchestration, deployment automation, and end-to-end delivery workflows commonly used in modern DevOps and platform engineering roles.
-
