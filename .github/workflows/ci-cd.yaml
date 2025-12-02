@@ -124,15 +124,10 @@ jobs:
 
           # Update ONLY the dev overlay tag in a YAML-safe way
           IMAGE_TAG_VALUE="${IMAGE_TAG}"
-          yq -i -I0 '
-            .images |=
-              (map(
-                 if .name == "project1-nginx" then
-                   .newTag = strenv(IMAGE_TAG_VALUE)
-                 else
-                   .
-                 end
-              ))
+
+          yq -i '
+            (.images[] | select(.name == "project1-nginx") | .newTag)
+              = strenv(IMAGE_TAG)
           ' overlays/dev/kustomization.yaml
 
           git config user.name "github-actions"
