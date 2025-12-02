@@ -44,6 +44,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: DEBUG – workflow version 2025-12-01-1
+        run: |
+          echo "DEBUG: running updated CI/CD workflow (2025-12-01-1)"
+
       # Check out the repository contents so the runner has access to app/ and k8s/
       - name: Checkout code
         uses: actions/checkout@v4
@@ -114,8 +118,22 @@ jobs:
 
           git checkout $GITOPS_BRANCH
 
-          # Update ONLY the dev overlay tag (sed version)
-          sed -i "/name: project1-nginx/,/name:/s/newTag:.*/    newTag: ${IMAGE_TAG}/" overlays/dev/kustomization.yaml
+          # Install yq (YAML-safe editor, lifesaver)
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+          # Update ONLY the dev overlay tag in a YAML-safe way
+          IMAGE_TAG_VALUE="${IMAGE_TAG}"
+          yq -i -I0 '
+            .images |=
+              (map(
+                 if .name == "project1-nginx" then
+                   .newTag = strenv(IMAGE_TAG_VALUE)
+                 else
+                   .
+                 end
+              ))
+          ' overlays/dev/kustomization.yaml
 
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
