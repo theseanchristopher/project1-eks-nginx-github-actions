@@ -18,8 +18,8 @@
 #        by modifying the Kustomize `newTag:` field in the dev overlay.
 #      - Argo CD automatically detects this Git commit, syncs the change,
 #        and deploys the new image to the EKS cluster using pull-based CD.
-#      - Job 2 (direct kubectl deployment) is disabled or removed on this branch,
-#        because GitOps manages all deployments.
+#      - Job 2 (direct kubectl deployment) is disabled for this branch via
+#        the `if: github.ref == 'refs/heads/main'` condition.
 #
 # ==========================================================================================
 
@@ -44,10 +44,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: DEBUG – workflow version 2025-12-01-1
-        run: |
-          echo "DEBUG: running updated CI/CD workflow (2025-12-01-1)"
-
       # Check out the repository contents so the runner has access to app/ and k8s/
       - name: Checkout code
         uses: actions/checkout@v4
@@ -78,32 +74,32 @@ jobs:
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
         run: |
           # Use the Git commit SHA as an immutable image tag
-          IMAGE_TAG=${GITHUB_SHA}
+          IMAGE_TAG="${GITHUB_SHA}"
 
           # Build the container image from the Dockerfile in app/
-          docker build -t $ECR_REPOSITORY:latest ./app
+          docker build -t "${ECR_REPOSITORY}:latest" ./app
 
           # Retag the image with the full ECR registry/repository path + SHA tag
-          docker tag $ECR_REPOSITORY:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker tag "${ECR_REPOSITORY}:latest" "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
           # Push the SHA-tagged image to ECR
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
-          # Optionally expose the full image reference as a step output (not consumed yet)
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          # Expose the full image reference as a step output (not currently consumed)
+          echo "image=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
       # ---------------------------------------------
       # Update Project 3 GitOps repo with the new image tag.
       #
       # This step connects Project 1's CI pipeline to Project 3's GitOps configuration.
       # After building and pushing the application image to ECR, we update the Kustomize
-      # 'newTag:' field in the Project 3 overlay. Argo CD automatically detects this Git
-      # commit and syncs the new image version into the EKS cluster (pull-based CD).
+      # 'newTag:' field in the Project 3 dev overlay. Argo CD automatically detects this
+      # Git commit and syncs the new image version into the EKS cluster (pull-based CD).
       #
       # IMPORTANT:
       # - Uses a PAT stored in PROJECT3_REPO_PAT (never hard-coded).
       # - Updates only the Project 3 repo—NO changes occur to Project 1 manifests.
-      # - This step enables fully automated CI → GitOps → Argo CD → EKS deployment.
+      # - This enables fully automated CI → GitOps → Argo CD → EKS deployment for dev.
       # ---------------------------------------------
       - name: Update dev overlay in project3-app-config
         env:
@@ -113,13 +109,14 @@ jobs:
           GITOPS_PAT: ${{ secrets.PROJECT3_REPO_PAT }}
         run: |
           # Clone the GitOps repo using PAT for authentication
-          git clone https://$GITOPS_PAT@github.com/$GITOPS_REPO.git
+          git clone "https://${GITOPS_PAT}@github.com/${GITOPS_REPO}.git"
           cd project3-app-config
 
-          git checkout $GITOPS_BRANCH
+          git checkout "${GITOPS_BRANCH}"
 
-          # Install yq (YAML-safe editor, lifesaver)
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          # Install yq (YAML-safe editor)
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
           # Update ONLY the dev overlay tag in a YAML-safe way
@@ -130,19 +127,25 @@ jobs:
               = strenv(IMAGE_TAG)
           ' overlays/dev/kustomization.yaml
 
+          echo "Updated images block in overlays/dev/kustomization.yaml:"
+          yq '.images' overlays/dev/kustomization.yaml
+
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git commit -am "Update dev image tag to ${IMAGE_TAG}" || echo "No changes to commit"
+          git commit -am "Update dev image tag to ${IMAGE_TAG_VALUE}" || echo "No changes to commit"
 
           # Authenticate Git remote using PAT
-          git remote set-url origin https://$GITOPS_PAT@github.com/$GITOPS_REPO.git
-          git push origin $GITOPS_BRANCH
+          git remote set-url origin "https://${GITOPS_PAT}@github.com/${GITOPS_REPO}.git"
+          git push origin "${GITOPS_BRANCH}"
 
   # ------------------------------
   # Job 2: Deploy to EKS and run smoke test
   # ------------------------------
   deploy:
     # Only execute on the 'main' branch.
+    # NOTE: Since this workflow is triggered only on project3-gitops,
+    #       this job is effectively disabled here and remains as
+    #       documentation for the classic main-branch CI/CD path.
     if: github.ref == 'refs/heads/main'
 
     name: Deploy to EKS
@@ -175,8 +178,8 @@ jobs:
       - name: Update kubeconfig for EKS cluster
         run: |
           aws eks update-kubeconfig \
-            --name ${{ secrets.EKS_CLUSTER_NAME }} \
-            --region ${{ secrets.AWS_REGION }}
+            --name "${{ secrets.EKS_CLUSTER_NAME }}" \
+            --region "${{ secrets.AWS_REGION }}"
 
       # Update the Kubernetes Deployment manifest to use the newly built image.
       # We replace a placeholder in deployment.yaml with the SHA-tagged image URI.
@@ -185,10 +188,10 @@ jobs:
           ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
         run: |
-          IMAGE_TAG=${GITHUB_SHA}
+          IMAGE_TAG="${GITHUB_SHA}"
 
           # Replace IMAGE_PLACEHOLDER in k8s/deployment.yaml with the full image reference
-          sed -i "s#IMAGE_PLACEHOLDER#$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG#g" k8s/deployment.yaml
+          sed -i "s#IMAGE_PLACEHOLDER#${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}#g" k8s/deployment.yaml
 
       # Apply all Kubernetes manifests to the target namespace and wait for the rollout.
       # This ensures the deployment is healthy before we run the smoke test.
@@ -196,14 +199,14 @@ jobs:
         env:
           K8S_NAMESPACE: ${{ secrets.K8S_NAMESPACE }}
         run: |
-          # Ensure target namespace exists or create.
-          kubectl get namespace "$K8S_NAMESPACE" || kubectl create namespace "$K8S_NAMESPACE"
+          # Ensure target namespace exists or create it
+          kubectl get namespace "${K8S_NAMESPACE}" || kubectl create namespace "${K8S_NAMESPACE}"
 
           # Apply all manifests in the k8s/ directory to the specified namespace
-          kubectl apply -n $K8S_NAMESPACE -f k8s/
+          kubectl apply -n "${K8S_NAMESPACE}" -f k8s/
 
           # Wait for the nginx deployment to finish rolling out
-          kubectl rollout status deployment/nginx-deployment -n $K8S_NAMESPACE --timeout=120s
+          kubectl rollout status deployment/nginx-deployment -n "${K8S_NAMESPACE}" --timeout=120s
 
       # Perform a simple HTTPS smoke test against the Ingress host.
       # This validates that the app is reachable over HTTPS and serving the expected content.
@@ -214,22 +217,21 @@ jobs:
         run: |
           set +e  # Do not exit immediately on errors; we handle failures explicitly.
 
-          echo "Namespace: $K8S_NAMESPACE"
-          echo "Expected content: $EXPECTED_CONTENT"
+          echo "Namespace: ${K8S_NAMESPACE}"
+          echo "Expected content: ${EXPECTED_CONTENT}"
 
           # Retrieve the host configured on the Ingress (e.g., project1.seanxtopher.com)
-          LB_HOST=$(kubectl get ingress nginx-ingress -n "$K8S_NAMESPACE" -o jsonpath='{.spec.rules[0].host}')
-          echo "LB_HOST=$LB_HOST"
+          LB_HOST=$(kubectl get ingress nginx-ingress -n "${K8S_NAMESPACE}" -o jsonpath='{.spec.rules[0].host}')
+          echo "LB_HOST=${LB_HOST}"
           echo "Waiting for HTTPS endpoint to become ready..."
 
           # Retry loop to allow DNS/ALB propagation and pod readiness
           for i in {1..20}; do
-            # -s: silent, -S: show error, --fail: non-zero on HTTP errors
-            RESPONSE=$(curl -sS --fail https://$LB_HOST || true)
-            echo "Attempt $i: $RESPONSE"
+            RESPONSE=$(curl -sS --fail "https://${LB_HOST}" || true)
+            echo "Attempt ${i}: ${RESPONSE}"
 
             # Look for a known string from the custom landing page to confirm success
-            if echo "$RESPONSE" | grep -q "$EXPECTED_CONTENT"; then
+            if echo "${RESPONSE}" | grep -q "${EXPECTED_CONTENT}"; then
               echo "App is responding correctly over HTTPS!"
               exit 0
             fi
@@ -239,3 +241,4 @@ jobs:
 
           echo "App did not return the expected content after multiple attempts."
           exit 1
+
