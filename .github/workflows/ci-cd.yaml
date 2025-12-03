@@ -138,6 +138,45 @@ jobs:
           git remote set-url origin "https://${GITOPS_PAT}@github.com/${GITOPS_REPO}.git"
           git push origin "${GITOPS_BRANCH}"
 
+      - name: Checkout Project 4 GitOps repo
+        uses: actions/checkout@v4
+        with:
+          repository: theseanchristopher/project4-helm-argo-gitops
+          ref: project4-gitops
+          token: ${{ secrets.PROJECT4_REPO_PAT }}
+          path: project4-gitops
+
+      - name: Update Project 4 dev image tag
+        working-directory: project4-gitops
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Current values-dev.yaml:"
+          cat charts/app/values-dev.yaml
+
+          # Set image.tag to the current IMAGE_TAG
+          yq -i '.image.tag = env(IMAGE_TAG)' charts/app/values-dev.yaml
+
+          echo "Updated values-dev.yaml:"
+          cat charts/app/values-dev.yaml
+
+      - name: Commit and push changes to Project 4 GitOps repo
+        working-directory: project4-gitops
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          # Only commit if there are changes
+          if ! git diff --quiet; then
+            git add charts/app/values-dev.yaml
+            git commit -m "Update Project 4 dev image tag to ${IMAGE_TAG}"
+            git push origin project4-gitops
+          else
+            echo "No changes to commit."
+          fi
+
   # ------------------------------
   # Job 2: Deploy to EKS and run smoke test
   # ------------------------------
