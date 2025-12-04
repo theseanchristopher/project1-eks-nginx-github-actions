@@ -1,34 +1,31 @@
 # ==========================================================================================
 # GitHub Actions Workflow – Branch Strategy Overview
 #
-# This repository supports two parallel deployment models for the same application:
+# This repository supports two deployment models for the same application:
 #
 #   1. **main branch**  → Traditional push-based CI/CD
 #      ------------------------------------------------
 #      - Builds and pushes the application image to ECR.
 #      - Deploys directly to the EKS cluster using kubectl.
-#      - Represents the classic CI/CD model from Project 1.
-#      - No interaction with the Project 3 GitOps repo.
 #
-#   2. **project3-gitops branch**  → GitOps-based CI/CD (Project 3 Integration)
+#   2. **project5-gitops branch**  → GitOps-based CI/CD (Project 5 Integration)
 #      ------------------------------------------------------------------------
 #      - Builds and pushes the application image to ECR (same as main).
-#      - After pushing the image, updates the Project 3 GitOps repo
-#            (theseanchristopher/project3-app-config)
-#        by modifying the Kustomize `newTag:` field in the dev overlay.
+#      - After pushing the image, updates the Project 5 GitOps repo
+#            (theseanchristopher/project5-argocd-applicationset)
+#        by modifying the dev ApplicationSet's `image.tag` value.
 #      - Argo CD automatically detects this Git commit, syncs the change,
-#        and deploys the new image to the EKS cluster using pull-based CD.
+#        and deploys the new image to the dev environment via ApplicationSet.
 #      - Job 2 (direct kubectl deployment) is disabled for this branch via
 #        the `if: github.ref == 'refs/heads/main'` condition.
-#
 # ==========================================================================================
 
 name: CI/CD to EKS
 
 on:
   push:
-    # Run this pipeline when changes are pushed to the project3-gitops branch
-    branches: [ project3-gitops ]
+    # Run this pipeline when changes are pushed to the project5-gitops branch
+    branches: [ project5-gitops ]
     # Limit triggers to application code, Kubernetes manifests, or workflow changes
     paths:
       - "app/**"
@@ -89,93 +86,73 @@ jobs:
           echo "image=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
       # ---------------------------------------------
-      # Update Project 3 GitOps repo with the new image tag.
+      # Update Project 5 GitOps repo with the new image tag.
       #
-      # This step connects Project 1's CI pipeline to Project 3's GitOps configuration.
-      # After building and pushing the application image to ECR, we update the Kustomize
-      # 'newTag:' field in the Project 3 dev overlay. Argo CD automatically detects this
-      # Git commit and syncs the new image version into the EKS cluster (pull-based CD).
+      # This step connects Project 1's CI pipeline to Project 5's GitOps configuration.
+      # After building and pushing the application image to ECR, we update the dev
+      # ApplicationSet's `image.tag` parameter in the Project 5 repo. Argo CD detects
+      # this Git commit and automatically syncs the change to the dev environment.
       #
       # IMPORTANT:
-      # - Uses a PAT stored in PROJECT3_REPO_PAT (never hard-coded).
-      # - Updates only the Project 3 repo—NO changes occur to Project 1 manifests.
+      # - Uses a PAT stored in PROJECT5_REPO_PAT (never hard-coded).
+      # - Updates only the Project 5 repo—NO changes occur to Project 1 manifests.
       # - This enables fully automated CI → GitOps → Argo CD → EKS deployment for dev.
       # ---------------------------------------------
-      - name: Update dev overlay in project3-app-config
-        env:
-          IMAGE_TAG: ${{ github.sha }}
-          GITOPS_REPO: theseanchristopher/project3-app-config
-          GITOPS_BRANCH: main
-          GITOPS_PAT: ${{ secrets.PROJECT3_REPO_PAT }}
+
+      - name: Install yq
         run: |
-          # Clone the GitOps repo using PAT for authentication
-          git clone "https://${GITOPS_PAT}@github.com/${GITOPS_REPO}.git"
-          cd project3-app-config
-
-          git checkout "${GITOPS_BRANCH}"
-
-          # Install yq (YAML-safe editor)
           sudo wget -qO /usr/local/bin/yq \
             https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-          # Update ONLY the dev overlay tag in a YAML-safe way
-          IMAGE_TAG_VALUE="${IMAGE_TAG}"
-
-          yq -i '
-            (.images[] | select(.name == "project1-nginx") | .newTag)
-              = strenv(IMAGE_TAG)
-          ' overlays/dev/kustomization.yaml
-
-          echo "Updated images block in overlays/dev/kustomization.yaml:"
-          yq '.images' overlays/dev/kustomization.yaml
-
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git commit -am "Update dev image tag to ${IMAGE_TAG_VALUE}" || echo "No changes to commit"
-
-          # Authenticate Git remote using PAT
-          git remote set-url origin "https://${GITOPS_PAT}@github.com/${GITOPS_REPO}.git"
-          git push origin "${GITOPS_BRANCH}"
-
-      - name: Checkout Project 4 GitOps repo
+      # Checkout Project 5 GitOps repo
+      - name: Checkout Project 5 GitOps repo
         uses: actions/checkout@v4
         with:
-          repository: theseanchristopher/project4-helm-argo-gitops
-          ref: project4-gitops
-          token: ${{ secrets.PROJECT4_REPO_PAT }}
-          path: project4-gitops
+          repository: theseanchristopher/project5-argocd-applicationset
+          token: ${{ secrets.PROJECT5_REPO_PAT }}
+          path: project5-gitops
+          ref: main
 
-      - name: Update Project 4 dev image tag
-        working-directory: project4-gitops
+      # Update image.tag in the dev ApplicationSet only
+      - name: Update dev image tag in Project 5 ApplicationSet
+        working-directory: project5-gitops
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          echo "Current values-dev.yaml:"
-          cat charts/app/values-dev.yaml
+          echo "Current ApplicationSet file:"
+          cat applicationsets/project5-applicationset.yaml
 
-          # Set image.tag to the current IMAGE_TAG
-          yq -i '.image.tag = env(IMAGE_TAG)' charts/app/values-dev.yaml
+          # Update ONLY the dev ApplicationSet's image.tag parameter
+          yq -i '
+            (select(.kind == "ApplicationSet" and .metadata.name == "project5-dev")
+              .spec.template.spec.source.helm.parameters[]
+            | select(.name == "image.tag")
+            | .value) = strenv(IMAGE_TAG)
+          ' applicationsets/project5-applicationset.yaml
 
-          echo "Updated values-dev.yaml:"
-          cat charts/app/values-dev.yaml
+          echo "Updated ApplicationSet file:"
+          cat applicationsets/project5-applicationset.yaml
 
-      - name: Commit and push changes to Project 4 GitOps repo
-        working-directory: project4-gitops
+      # Commit and push changes back to Project 5 repo (main branch)
+      - name: Commit and push changes to Project 5
+        working-directory: project5-gitops
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Only commit if there are changes
-          if ! git diff --quiet; then
-            git add charts/app/values-dev.yaml
-            git commit -m "Update Project 4 dev image tag to ${IMAGE_TAG}"
-            git push origin project4-gitops
-          else
-            echo "No changes to commit."
+          git add applicationsets/project5-applicationset.yaml
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
           fi
+
+          git commit -m "Update project5-dev image tag to ${IMAGE_TAG}"
+          git push origin main
+
 
   # ------------------------------
   # Job 2: Deploy to EKS and run smoke test
