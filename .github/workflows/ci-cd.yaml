@@ -8,14 +8,15 @@
 #      - Builds and pushes the application image to ECR.
 #      - Deploys directly to the EKS cluster using kubectl.
 #
-#   2. **project5-gitops branch**  → GitOps-based CI/CD (Project 5 Integration)
+#   2. **project6-gitops branch**  → GitOps-based CI/CD (Project 6 Integration)
 #      ------------------------------------------------------------------------
 #      - Builds and pushes the application image to ECR (same as main).
-#      - After pushing the image, updates the Project 5 GitOps repo
-#            (theseanchristopher/project5-argocd-applicationset)
-#        by modifying the dev ApplicationSet's `image.tag` value.
-#      - Argo CD automatically detects this Git commit, syncs the change,
-#        and deploys the new image to the dev environment via ApplicationSet.
+#      - After pushing the image, updates the Project 4 Helm GitOps repo
+#            (theseanchristopher/project4-helm-argo-gitops)
+#        by modifying the environment values files with the new `image.tag` value.
+#      - Argo CD (Project 6 ApplicationSet) automatically detects this Git commit,
+#        syncs the change, and deploys the new image to the dev/pre/prod
+#        environments from a single ApplicationSet template.
 #      - Job 2 (direct kubectl deployment) is disabled for this branch via
 #        the `if: github.ref == 'refs/heads/main'` condition.
 # ==========================================================================================
@@ -24,8 +25,8 @@ name: CI/CD to EKS
 
 on:
   push:
-    # Run this pipeline when changes are pushed to the project5-gitops branch
-    branches: [ project5-gitops ]
+    # Run this pipeline when changes are pushed to the project6-gitops branch
+    branches: [ project6-gitops ]
     # Limit triggers to application code, Kubernetes manifests, or workflow changes
     paths:
       - "app/**"
@@ -86,17 +87,17 @@ jobs:
           echo "image=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
       # ---------------------------------------------
-      # Update Project 5 GitOps repo with the new image tag.
+      # Update Project 4 GitOps repo with the new image tag.
       #
-      # This step connects Project 1's CI pipeline to Project 5's GitOps configuration.
-      # After building and pushing the application image to ECR, we update the dev
-      # ApplicationSet's `image.tag` parameter in the Project 5 repo. Argo CD detects
-      # this Git commit and automatically syncs the change to the dev environment.
+      # This step connects Project 1's CI pipeline to Project 4's Helm GitOps configuration.
+      # After building and pushing the application image to ECR, we update the environment
+      # values files in the Project 4 repo so that Argo CD (via Project 6 ApplicationSet)
+      # deploys the new image tag to dev/pre/prod.
       #
       # IMPORTANT:
-      # - Uses a PAT stored in PROJECT5_REPO_PAT (never hard-coded).
-      # - Updates only the Project 5 repo—NO changes occur to Project 1 manifests.
-      # - This enables fully automated CI → GitOps → Argo CD → EKS deployment for dev.
+      # - Uses a PAT stored in PROJECT4_REPO_PAT (never hard-coded).
+      # - Updates only the Project 4 repo—NO changes occur to Project 1 manifests.
+      # - This enables fully automated CI → GitOps → Argo CD → EKS deployment for all environments.
       # ---------------------------------------------
 
       - name: Install yq
@@ -105,53 +106,43 @@ jobs:
             https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-      # Checkout Project 5 GitOps repo
-      - name: Checkout Project 5 GitOps repo
+      # Checkout Project 4 GitOps repo
+      - name: Checkout Project 4 GitOps repo
         uses: actions/checkout@v4
         with:
-          repository: theseanchristopher/project5-argocd-applicationset
-          token: ${{ secrets.PROJECT5_REPO_PAT }}
-          path: project5-gitops
-          ref: main
+          repository: theseanchristopher/project4-helm-argo-gitops
+          token: ${{ secrets.PROJECT4_REPO_PAT }}
+          path: project4-gitops
+          ref: project4-gitops
 
-      # Update image.tag in the dev ApplicationSet only
-      - name: Update dev image tag in Project 5 ApplicationSet
-        working-directory: project5-gitops
+      # Update image.tag in all Project 4 environment values files
+      - name: Update image tag in Project 4 values files
+        working-directory: project4-gitops/charts/app
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          echo "Current ApplicationSet file:"
-          cat applicationsets/project5-applicationset.yaml
+          yq -i 'image.tag = strenv(IMAGE_TAG)' values-dev.yaml
+          yq -i 'image.tag = strenv(IMAGE_TAG)' values-pre.yaml
+          yq -i 'image.tag = strenv(IMAGE_TAG)' values-prod.yaml
 
-          # Update ONLY the dev ApplicationSet's image.tag parameter
-          yq -i '
-            (select(.kind == "ApplicationSet" and .metadata.name == "project5-dev")
-              .spec.template.spec.source.helm.parameters[]
-            | select(.name == "image.tag")
-            | .value) = strenv(IMAGE_TAG)
-          ' applicationsets/project5-applicationset.yaml
-
-          echo "Updated ApplicationSet file:"
-          cat applicationsets/project5-applicationset.yaml
-
-      # Commit and push changes back to Project 5 repo (main branch)
-      - name: Commit and push changes to Project 5
-        working-directory: project5-gitops
+      # Commit and push changes back to the Project 4 repo
+      - name: Commit and push changes to Project 4 GitOps repo
+        working-directory: project4-gitops
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add applicationsets/project5-applicationset.yaml
+          git add charts/app/
 
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
           fi
 
-          git commit -m "Update project5-dev image tag to ${IMAGE_TAG}"
-          git push origin main
+          git commit -m "Update project4 image tag to ${IMAGE_TAG}"
+          git push origin project4-gitops
 
 
   # ------------------------------
@@ -159,7 +150,7 @@ jobs:
   # ------------------------------
   deploy:
     # Only execute on the 'main' branch.
-    # NOTE: Since this workflow is triggered only on project3-gitops,
+    # NOTE: Since this workflow is triggered only on project6-gitops,
     #       this job is effectively disabled here and remains as
     #       documentation for the classic main-branch CI/CD path.
     if: github.ref == 'refs/heads/main'
