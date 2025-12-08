@@ -121,9 +121,9 @@ jobs:
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          yq -i 'image.tag = strenv(IMAGE_TAG)' values-dev.yaml
-          yq -i 'image.tag = strenv(IMAGE_TAG)' values-pre.yaml
-          yq -i 'image.tag = strenv(IMAGE_TAG)' values-prod.yaml
+          yq -i '.image.tag = strenv(IMAGE_TAG)' values-dev.yaml
+          yq -i '.image.tag = strenv(IMAGE_TAG)' values-pre.yaml
+          yq -i '.image.tag = strenv(IMAGE_TAG)' values-prod.yaml
 
       # Commit and push changes back to the Project 4 repo
       - name: Commit and push changes to Project 4 GitOps repo
