@@ -1,0 +1,4 @@
+# HELP project_app_dummy_requests_total Dummy counter for demo purposes
+# TYPE project_app_dummy_requests_total counter
+project_app_dummy_requests_total 1
+
