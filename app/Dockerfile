@@ -7,7 +7,7 @@ RUN rm -rf /usr/share/nginx/html/*
 COPY index.html /usr/share/nginx/html/index.html
 
 # Copy metrics file
-COPY app/metrics/metrics.prom /usr/share/nginx/html/metrics/metrics.prom
+COPY metrics/metrics.prom /usr/share/nginx/html/metrics/metrics.prom
 
 # Custom Nginx config with /metrics endpoint
 COPY default.conf /etc/nginx/conf.d/default.conf
