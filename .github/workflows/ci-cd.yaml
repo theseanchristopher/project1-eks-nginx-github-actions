@@ -31,7 +31,6 @@ on:
     paths:
       - "app/**"
       - "k8s/**"
-      - "nginx/**"
       - ".github/workflows/**"
 
 jobs:
