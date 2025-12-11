@@ -1,5 +1,5 @@
 # ==========================================================================================
-# GitHub Actions Workflow – Branch Strategy Overview
+# GitHub Actions Workflow – Project 8: Argo Rollouts Progressive Delivery
 #
 # This repository supports two deployment models for the same application:
 #
@@ -8,24 +8,29 @@
 #      - Builds and pushes the application image to ECR.
 #      - Deploys directly to the EKS cluster using kubectl.
 #
-#   2. **project6-gitops branch**  → GitOps-based CI/CD (Project 6 Integration)
-#      ------------------------------------------------------------------------
+#   2. **project8-argo-rollouts branch**  → GitOps-based CI/CD (Project 8 Integration)
+#      -------------------------------------------------------------------------------
 #      - Builds and pushes the application image to ECR (same as main).
-#      - After pushing the image, updates the Project 4 Helm GitOps repo
-#            (theseanchristopher/project4-helm-argo-gitops)
-#        by modifying the environment values files with the new `image.tag` value.
-#      - Argo CD (Project 6 ApplicationSet) automatically detects this Git commit,
-#        syncs the change, and deploys the new image to the dev/pre/prod
-#        environments from a single ApplicationSet template.
-#      - Job 2 (direct kubectl deployment) is disabled for this branch via
-#        the `if: github.ref == 'refs/heads/main'` condition.
+#      - After pushing the image, updates the **Project 8 GitOps repo**:
+#            theseanchristopher/project8-argo-rollouts-progressive-delivery
+#        by updating the image reference in the Argo Rollout manifest.
+#      - Argo CD detects this Git commit and syncs the updated Rollout.
+#      - Argo Rollouts then performs a **canary rollout** in the dev environment
+#        (and pre/prod if those environments are enabled).
+#
+# Notes:
+# - Only the **project8-argo-rollouts** branch triggers the GitOps workflow.
+# - This workflow does not change Kubernetes manifests in this repo; it only
+#   modifies the Project 8 GitOps repository.
+# - Job 2 (direct kubectl deployment) is still tied to the `main` branch and
+#   represents the original push-based CI/CD path from Project 1.
 # ==========================================================================================
 
 name: CI/CD to EKS
 
 on:
   push:
-    # Run this pipeline when changes are pushed to the project6-gitops branch
+    # Run this pipeline when changes are pushed to the Project 8 GitOps/rollouts branch
     branches: [ project8-argo-rollouts ]
     # Limit triggers to application code, Kubernetes manifests, or workflow changes
     paths:
@@ -87,17 +92,18 @@ jobs:
           echo "image=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
       # ---------------------------------------------
-      # Update Project 4 GitOps repo with the new image tag.
+      # Update Project 8 GitOps repo with the new image tag.
       #
-      # This step connects Project 1's CI pipeline to Project 4's Helm GitOps configuration.
-      # After building and pushing the application image to ECR, we update the environment
-      # values files in the Project 4 repo so that Argo CD (via Project 6 ApplicationSet)
-      # deploys the new image tag to dev/pre/prod.
+      # This step connects Project 1's CI pipeline to the **Project 8 GitOps configuration**.
+      # After building and pushing the application image to ECR, we update the Argo Rollout
+      # manifest in the Project 8 repo so that Argo CD and Argo Rollouts use the new image
+      # for the canary rollout in dev (and other environments if enabled).
       #
       # IMPORTANT:
-      # - Uses a PAT stored in PROJECT4_REPO_PAT (never hard-coded).
-      # - Updates only the Project 4 repo—NO changes occur to Project 1 manifests.
-      # - This enables fully automated CI → GitOps → Argo CD → EKS deployment for all environments.
+      # - Uses a PAT stored in PROJECT8_REPO_PAT (never hard-coded).
+      # - Only updates the external Project 8 GitOps repo—NO changes occur to Project 1
+      #   Kubernetes manifests.
+      # - This enables CI → GitOps → Argo CD → Argo Rollouts progressive delivery for Project 8.
       # ---------------------------------------------
 
       - name: Install yq
@@ -115,8 +121,8 @@ jobs:
           path: main
           ref: main
 
-      # Update image.tag in all Project 4 environment values files
-      - name: Update image tag in Project 4 values files
+      # Update the Argo Rollout image reference in the Project 8 repo
+      - name: Update image tag in Project 8 Rollout
         working-directory: main/kustomize/base
         env:
           ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
@@ -153,9 +159,12 @@ jobs:
   # ------------------------------
   deploy:
     # Only execute on the 'main' branch.
-    # NOTE: Since this workflow is triggered only on project6-gitops,
-    #       this job is effectively disabled here and remains as
-    #       documentation for the classic main-branch CI/CD path.
+    #
+    # NOTE:
+    # - Since this workflow is triggered on `project8-argo-rollouts`, this job
+    #   does not run for Project 8 GitOps changes.
+    # - It remains as documentation (and a working path) for the classic,
+    #   push-based CI/CD flow on the main branch from Project 1.
     if: github.ref == 'refs/heads/main'
 
     name: Deploy to EKS
