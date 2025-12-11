@@ -123,7 +123,7 @@ jobs:
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          yq -i '.spec.template.spec.containers[0].image = env(ECR_REGISTRY) + "/" + env(ECR_REPOSITORY) + ":" env(IMAGE_TAG)' rollout.yaml
+          yq -i '.spec.template.spec.containers[0].image = env(ECR_REGISTRY) + "/" + env(ECR_REPOSITORY) + ":" + env(IMAGE_TAG)' rollout.yaml
 
           echo "Updated rollout.yaml:"
           yq '.spec.template.spec.containers[0].image' rollout.yaml
