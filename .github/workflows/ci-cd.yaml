@@ -26,7 +26,7 @@ name: CI/CD to EKS
 on:
   push:
     # Run this pipeline when changes are pushed to the project6-gitops branch
-    branches: [ project7-metrics-endpoint ]
+    branches: [ project8-argo-rollouts ]
     # Limit triggers to application code, Kubernetes manifests, or workflow changes
     paths:
       - "app/**"
@@ -106,43 +106,46 @@ jobs:
             https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-      # Checkout Project 4 GitOps repo
-      - name: Checkout Project 4 GitOps repo
+      # Checkout Project 8 GitOps repo
+      - name: Checkout Project 8 GitOps repo
         uses: actions/checkout@v4
         with:
-          repository: theseanchristopher/project4-helm-argo-gitops
-          token: ${{ secrets.PROJECT4_REPO_PAT }}
-          path: project4-gitops
-          ref: project4-gitops
+          repository: theseanchristopher/project8-argo-rollouts-progressive-delivery
+          token: ${{ secrets.PROJECT8_REPO_PAT }}
+          path: main
+          ref: main
 
       # Update image.tag in all Project 4 environment values files
       - name: Update image tag in Project 4 values files
-        working-directory: project4-gitops/charts/app
+        working-directory: main/kustomize/base
         env:
+          ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          yq -i '.image.tag = strenv(IMAGE_TAG)' values-dev.yaml
-          yq -i '.image.tag = strenv(IMAGE_TAG)' values-pre.yaml
-          yq -i '.image.tag = strenv(IMAGE_TAG)' values-prod.yaml
+          yq -i '.spec.template.spec.containers[0].image = env(ECR_REGISTRY) + "/" + env(ECR_REPOSITORY) + ":" env(IMAGE_TAG)' rollout.yaml
 
-      # Commit and push changes back to the Project 4 repo
-      - name: Commit and push changes to Project 4 GitOps repo
-        working-directory: project4-gitops
+          echo "Updated rollout.yaml:"
+          yq '.spec.template.spec.containers[0].image' rollout.yaml
+
+      # Commit and push changes back to the Project 8 repo
+      - name: Commit and push changes to Project 8 GitOps repo
+        working-directory: main
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add charts/app/
+          git add kustomize/base/rollout.yaml
 
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
           fi
 
-          git commit -m "Update project4 image tag to ${IMAGE_TAG}"
-          git push origin project4-gitops
+          git commit -m "Update Project 8 rollout image tag to ${IMAGE_TAG}"
+          git push origin main
 
 
   # ------------------------------
