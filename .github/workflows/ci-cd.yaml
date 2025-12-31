@@ -3,23 +3,29 @@
 #
 # This repository supports two parallel deployment models for the same application:
 #
-#   1. **main branch**  → Traditional push-based CI/CD
-#      ------------------------------------------------
+#   1. **main branch**  → Traditional push-based CI/CD (Project 1)
+#      -----------------------------------------------------------
 #      - Builds and pushes the application image to ECR.
 #      - Deploys directly to the EKS cluster using kubectl.
 #      - Represents the classic CI/CD model from Project 1.
-#      - No interaction with the Project 3 GitOps repo.
+#      - No interaction with any GitOps repository.
 #
-#   2. **project3-gitops branch**  → GitOps-based CI/CD (Project 3 Integration)
+#   2. **project4-gitops branch**  → GitOps-based CI/CD (Project 4 Integration)
 #      ------------------------------------------------------------------------
 #      - Builds and pushes the application image to ECR (same as main).
-#      - After pushing the image, updates the Project 3 GitOps repo
-#            (theseanchristopher/project3-app-config)
-#        by modifying the Kustomize `newTag:` field in the dev overlay.
+#      - After pushing the image, updates the Project 4 GitOps repo
+#            (theseanchristopher/project4-helm-argo-gitops)
+#        by modifying the Helm dev values file:
+#            charts/app/values-dev.yaml  (image.tag)
 #      - Argo CD automatically detects this Git commit, syncs the change,
 #        and deploys the new image to the EKS cluster using pull-based CD.
 #      - Job 2 (direct kubectl deployment) is disabled for this branch via
 #        the `if: github.ref == 'refs/heads/main'` condition.
+#
+# NOTE:
+# - This workflow file is intentionally BRANCH-SCOPED.
+# - The copy of ci-cd.yaml on project4-gitops should only target Project 4.
+# - The Project 3 GitOps integration remains on the project3-gitops branch.
 #
 # ==========================================================================================
 
@@ -27,8 +33,8 @@ name: CI/CD to EKS
 
 on:
   push:
-    # Run this pipeline when changes are pushed to the project3-gitops branch
-    branches: [ project3-gitops ]
+    # Run this pipeline when changes are pushed to the project4-gitops branch
+    branches: [ project4-gitops ]
     # Limit triggers to application code, Kubernetes manifests, or workflow changes
     paths:
       - "app/**"
@@ -44,6 +50,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: DEBUG – workflow version 2025-12-31-project4
+        run: |
+          echo "DEBUG: running Project 4 GitOps workflow on project4-gitops branch"
+
       # Check out the repository contents so the runner has access to app/ and k8s/
       - name: Checkout code
         uses: actions/checkout@v4
@@ -74,69 +84,43 @@ jobs:
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
         run: |
           # Use the Git commit SHA as an immutable image tag
-          IMAGE_TAG="${GITHUB_SHA}"
+          IMAGE_TAG=${GITHUB_SHA}
 
           # Build the container image from the Dockerfile in app/
-          docker build -t "${ECR_REPOSITORY}:latest" ./app
+          docker build -t $ECR_REPOSITORY:latest ./app
 
           # Retag the image with the full ECR registry/repository path + SHA tag
-          docker tag "${ECR_REPOSITORY}:latest" "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker tag $ECR_REPOSITORY:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
           # Push the SHA-tagged image to ECR
-          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-          # Expose the full image reference as a step output (not currently consumed)
-          echo "image=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          # Optionally expose the full image reference as a step output (not consumed yet)
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
       # ---------------------------------------------
-      # Update Project 3 GitOps repo with the new image tag.
+      # Update Project 4 GitOps repo with the new image tag.
       #
-      # This step connects Project 1's CI pipeline to Project 3's GitOps configuration.
-      # After building and pushing the application image to ECR, we update the Kustomize
-      # 'newTag:' field in the Project 3 dev overlay. Argo CD automatically detects this
-      # Git commit and syncs the new image version into the EKS cluster (pull-based CD).
+      # This step connects Project 1's CI pipeline to Project 4's GitOps configuration.
+      # After building and pushing the application image to ECR, we update the Helm
+      # dev values file in the Project 4 GitOps repo:
+      #
+      #   charts/app/values-dev.yaml  (image.tag)
+      #
+      # Argo CD automatically detects this Git commit and syncs the new image version
+      # into the EKS cluster (pull-based CD).
       #
       # IMPORTANT:
-      # - Uses a PAT stored in PROJECT3_REPO_PAT (never hard-coded).
-      # - Updates only the Project 3 repo—NO changes occur to Project 1 manifests.
+      # - Uses a PAT stored in PROJECT4_REPO_PAT (never hard-coded).
+      # - Updates only the Project 4 repo—NO changes occur to Project 1 manifests.
       # - This enables fully automated CI → GitOps → Argo CD → EKS deployment for dev.
       # ---------------------------------------------
-      - name: Update dev overlay in project3-app-config
-        env:
-          IMAGE_TAG: ${{ github.sha }}
-          GITOPS_REPO: theseanchristopher/project3-app-config
-          GITOPS_BRANCH: main
-          GITOPS_PAT: ${{ secrets.PROJECT3_REPO_PAT }}
+
+      # Install yq (YAML-safe editor)
+      - name: Install yq
         run: |
-          # Clone the GitOps repo using PAT for authentication
-          git clone "https://${GITOPS_PAT}@github.com/${GITOPS_REPO}.git"
-          cd project3-app-config
-
-          git checkout "${GITOPS_BRANCH}"
-
-          # Install yq (YAML-safe editor)
-          sudo wget -qO /usr/local/bin/yq \
-            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
-
-          # Update ONLY the dev overlay tag in a YAML-safe way
-          IMAGE_TAG_VALUE="${IMAGE_TAG}"
-
-          yq -i '
-            (.images[] | select(.name == "project1-nginx") | .newTag)
-              = strenv(IMAGE_TAG)
-          ' overlays/dev/kustomization.yaml
-
-          echo "Updated images block in overlays/dev/kustomization.yaml:"
-          yq '.images' overlays/dev/kustomization.yaml
-
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git commit -am "Update dev image tag to ${IMAGE_TAG_VALUE}" || echo "No changes to commit"
-
-          # Authenticate Git remote using PAT
-          git remote set-url origin "https://${GITOPS_PAT}@github.com/${GITOPS_REPO}.git"
-          git push origin "${GITOPS_BRANCH}"
 
       - name: Checkout Project 4 GitOps repo
         uses: actions/checkout@v4
@@ -151,13 +135,13 @@ jobs:
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          echo "Current values-dev.yaml:"
+          echo "Current charts/app/values-dev.yaml:"
           cat charts/app/values-dev.yaml
 
           # Set image.tag to the current IMAGE_TAG
           yq -i '.image.tag = env(IMAGE_TAG)' charts/app/values-dev.yaml
 
-          echo "Updated values-dev.yaml:"
+          echo "Updated charts/app/values-dev.yaml:"
           cat charts/app/values-dev.yaml
 
       - name: Commit and push changes to Project 4 GitOps repo
@@ -182,7 +166,7 @@ jobs:
   # ------------------------------
   deploy:
     # Only execute on the 'main' branch.
-    # NOTE: Since this workflow is triggered only on project3-gitops,
+    # NOTE: Since this workflow is triggered only on project4-gitops,
     #       this job is effectively disabled here and remains as
     #       documentation for the classic main-branch CI/CD path.
     if: github.ref == 'refs/heads/main'
@@ -227,10 +211,10 @@ jobs:
           ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
         run: |
-          IMAGE_TAG="${GITHUB_SHA}"
+          IMAGE_TAG=${GITHUB_SHA}
 
           # Replace IMAGE_PLACEHOLDER in k8s/deployment.yaml with the full image reference
-          sed -i "s#IMAGE_PLACEHOLDER#${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}#g" k8s/deployment.yaml
+          sed -i "s#IMAGE_PLACEHOLDER#$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG#g" k8s/deployment.yaml
 
       # Apply all Kubernetes manifests to the target namespace and wait for the rollout.
       # This ensures the deployment is healthy before we run the smoke test.
@@ -238,14 +222,14 @@ jobs:
         env:
           K8S_NAMESPACE: ${{ secrets.K8S_NAMESPACE }}
         run: |
-          # Ensure target namespace exists or create it
-          kubectl get namespace "${K8S_NAMESPACE}" || kubectl create namespace "${K8S_NAMESPACE}"
+          # Ensure target namespace exists or create.
+          kubectl get namespace "$K8S_NAMESPACE" || kubectl create namespace "$K8S_NAMESPACE"
 
           # Apply all manifests in the k8s/ directory to the specified namespace
-          kubectl apply -n "${K8S_NAMESPACE}" -f k8s/
+          kubectl apply -n $K8S_NAMESPACE -f k8s/
 
           # Wait for the nginx deployment to finish rolling out
-          kubectl rollout status deployment/nginx-deployment -n "${K8S_NAMESPACE}" --timeout=120s
+          kubectl rollout status deployment/nginx-deployment -n $K8S_NAMESPACE --timeout=120s
 
       # Perform a simple HTTPS smoke test against the Ingress host.
       # This validates that the app is reachable over HTTPS and serving the expected content.
@@ -256,21 +240,22 @@ jobs:
         run: |
           set +e  # Do not exit immediately on errors; we handle failures explicitly.
 
-          echo "Namespace: ${K8S_NAMESPACE}"
-          echo "Expected content: ${EXPECTED_CONTENT}"
+          echo "Namespace: $K8S_NAMESPACE"
+          echo "Expected content: $EXPECTED_CONTENT"
 
           # Retrieve the host configured on the Ingress (e.g., project1.seanxtopher.com)
-          LB_HOST=$(kubectl get ingress nginx-ingress -n "${K8S_NAMESPACE}" -o jsonpath='{.spec.rules[0].host}')
-          echo "LB_HOST=${LB_HOST}"
+          LB_HOST=$(kubectl get ingress nginx-ingress -n "$K8S_NAMESPACE" -o jsonpath='{.spec.rules[0].host}')
+          echo "LB_HOST=$LB_HOST"
           echo "Waiting for HTTPS endpoint to become ready..."
 
           # Retry loop to allow DNS/ALB propagation and pod readiness
           for i in {1..20}; do
-            RESPONSE=$(curl -sS --fail "https://${LB_HOST}" || true)
-            echo "Attempt ${i}: ${RESPONSE}"
+            # -s: silent, -S: show error, --fail: non-zero on HTTP errors
+            RESPONSE=$(curl -sS --fail https://$LB_HOST || true)
+            echo "Attempt $i: $RESPONSE"
 
             # Look for a known string from the custom landing page to confirm success
-            if echo "${RESPONSE}" | grep -q "${EXPECTED_CONTENT}"; then
+            if echo "$RESPONSE" | grep -q "$EXPECTED_CONTENT"; then
               echo "App is responding correctly over HTTPS!"
               exit 0
             fi
@@ -280,4 +265,3 @@ jobs:
 
           echo "App did not return the expected content after multiple attempts."
           exit 1
-
