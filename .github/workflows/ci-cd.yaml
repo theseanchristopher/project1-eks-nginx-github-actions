@@ -1,9 +1,40 @@
+# ==========================================================================================
+# GitHub Actions Workflow – Branch Strategy Overview
+#
+# This repository supports two parallel deployment models for the same application:
+#
+#   1. **main branch**  → Traditional push-based CI/CD (Project 1)
+#      -----------------------------------------------------------
+#      - Builds and pushes the application image to ECR.
+#      - Deploys directly to the EKS cluster using kubectl.
+#      - Represents the classic CI/CD model from Project 1.
+#      - No interaction with any GitOps repository.
+#
+#   2. **project4-gitops branch**  → GitOps-based CI/CD (Project 4 Integration)
+#      ------------------------------------------------------------------------
+#      - Builds and pushes the application image to ECR (same as main).
+#      - After pushing the image, updates the Project 4 GitOps repo
+#            (theseanchristopher/project4-helm-argo-gitops)
+#        by modifying the Helm dev values file:
+#            charts/app/values-dev.yaml  (image.tag)
+#      - Argo CD automatically detects this Git commit, syncs the change,
+#        and deploys the new image to the EKS cluster using pull-based CD.
+#      - Job 2 (direct kubectl deployment) is disabled for this branch via
+#        the `if: github.ref == 'refs/heads/main'` condition.
+#
+# NOTE:
+# - This workflow file is intentionally BRANCH-SCOPED.
+# - The copy of ci-cd.yaml on project4-gitops should only target Project 4.
+# - The Project 3 GitOps integration remains on the project3-gitops branch.
+#
+# ==========================================================================================
+
 name: CI/CD to EKS
 
 on:
   push:
-    # Run this pipeline only when changes are pushed to the main branch
-    branches: [ main ]
+    # Run this pipeline when changes are pushed to the project4-gitops branch
+    branches: [ project4-gitops ]
     # Limit triggers to application code, Kubernetes manifests, or workflow changes
     paths:
       - "app/**"
@@ -19,6 +50,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: DEBUG – workflow version 2025-12-31-project4
+        run: |
+          echo "DEBUG: running Project 4 GitOps workflow on project4-gitops branch"
+
       # Check out the repository contents so the runner has access to app/ and k8s/
       - name: Checkout code
         uses: actions/checkout@v4
@@ -63,10 +98,79 @@ jobs:
           # Optionally expose the full image reference as a step output (not consumed yet)
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
+      # ---------------------------------------------
+      # Update Project 4 GitOps repo with the new image tag.
+      #
+      # This step connects Project 1's CI pipeline to Project 4's GitOps configuration.
+      # After building and pushing the application image to ECR, we update the Helm
+      # dev values file in the Project 4 GitOps repo:
+      #
+      #   charts/app/values-dev.yaml  (image.tag)
+      #
+      # Argo CD automatically detects this Git commit and syncs the new image version
+      # into the EKS cluster (pull-based CD).
+      #
+      # IMPORTANT:
+      # - Uses a PAT stored in PROJECT4_REPO_PAT (never hard-coded).
+      # - Updates only the Project 4 repo—NO changes occur to Project 1 manifests.
+      # - This enables fully automated CI → GitOps → Argo CD → EKS deployment for dev.
+      # ---------------------------------------------
+
+      # Install yq (YAML-safe editor)
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Checkout Project 4 GitOps repo
+        uses: actions/checkout@v4
+        with:
+          repository: theseanchristopher/project4-helm-argo-gitops
+          ref: project4-gitops
+          token: ${{ secrets.PROJECT4_REPO_PAT }}
+          path: project4-gitops
+
+      - name: Update Project 4 dev image tag
+        working-directory: project4-gitops
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Current charts/app/values-dev.yaml:"
+          cat charts/app/values-dev.yaml
+
+          # Set image.tag to the current IMAGE_TAG
+          yq -i '.image.tag = env(IMAGE_TAG)' charts/app/values-dev.yaml
+
+          echo "Updated charts/app/values-dev.yaml:"
+          cat charts/app/values-dev.yaml
+
+      - name: Commit and push changes to Project 4 GitOps repo
+        working-directory: project4-gitops
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          # Only commit if there are changes
+          if ! git diff --quiet; then
+            git add charts/app/values-dev.yaml
+            git commit -m "Update Project 4 dev image tag to ${IMAGE_TAG}"
+            git push origin project4-gitops
+          else
+            echo "No changes to commit."
+          fi
+
   # ------------------------------
   # Job 2: Deploy to EKS and run smoke test
   # ------------------------------
   deploy:
+    # Only execute on the 'main' branch.
+    # NOTE: Since this workflow is triggered only on project4-gitops,
+    #       this job is effectively disabled here and remains as
+    #       documentation for the classic main-branch CI/CD path.
+    if: github.ref == 'refs/heads/main'
+
     name: Deploy to EKS
     runs-on: ubuntu-latest
 
@@ -97,8 +201,8 @@ jobs:
       - name: Update kubeconfig for EKS cluster
         run: |
           aws eks update-kubeconfig \
-            --name ${{ secrets.EKS_CLUSTER_NAME }} \
-            --region ${{ secrets.AWS_REGION }}
+            --name "${{ secrets.EKS_CLUSTER_NAME }}" \
+            --region "${{ secrets.AWS_REGION }}"
 
       # Update the Kubernetes Deployment manifest to use the newly built image.
       # We replace a placeholder in deployment.yaml with the SHA-tagged image URI.
