@@ -4,11 +4,13 @@ A containerized web service is deployed to an AWS EKS cluster using a fully auto
 
 ## Introduction
 
-This project demonstrates proficient use of a CI/CD pipeline in a cloud-based, containerized environment. Amazon EKS provides Kubernetes orchestration, AWS ECR stores container images, and GitHub Actions automates the build-and-deploy workflow into a dedicated application namespace. The pipeline builds a Docker image with a custom landing page, pushes the image to ECR, updates the Kubernetes Deployment manifest to reference the new tag, and deploys the application to the cluster. The application is namespace-isolated, horizontally scalable through a Kubernetes HPA, and supports HTTPS ingress traffic via an AWS Application Load Balancer secured with an ACM certificate. Overall, this project simulates a real-world cloud deployment workflow used in modern DevOps and platform engineering roles.
+This project demonstrates proficient use of a CI/CD pipeline in a cloud-based, containerized environment. Amazon EKS provides Kubernetes orchestration, AWS ECR stores container images, and GitHub Actions automates the build-and-deploy workflow into a dedicated application namespace. The pipeline builds a Docker image with a custom landing page, pushes the image to ECR, updates the Kubernetes Deployment manifest to reference the new tag, and deploys the application to the cluster. The application is namespace-isolated, horizontally scalable through a Kubernetes HPA, and supports HTTPS ingress traffic via an AWS Application Load Balancer secured with an ACM certificate and protected by AWS Web Application Firewall (WAF). Overall, this project simulates a real-world cloud deployment workflow used in modern DevOps and platform engineering roles.
 
 ## Architecture Overview
 
 This project combines a GitHub Actions CI/CD pipeline with an Amazon EKS cluster running on a managed node group. Application images are built and stored in Amazon ECR, then deployed to a dedicated Kubernetes namespace in EKS. At runtime, traffic flows through an AWS Application Load Balancer (when the Ingress is enabled), which terminates HTTPS using an ACM certificate and routes requests to the Nginx application running inside the cluster.
+
+When enabled, AWS WAF is attached to the ALB to provide managed threat protections and IP-based rate limiting at the edge.
 
 ```mermaid
 flowchart LR
@@ -69,6 +71,8 @@ flowchart LR
 - **Infrastructure created with eksctl** using a managed node group.
 - **HTTPS smoke test** executed in the CI/CD pipeline to validate each release.
 - **Scalable, production-style architecture** closely resembling real-world DevOps workflows.
+- **AWS WAF (Web Application Firewall)** attached to the ALB Ingress (managed rule groups + IP rate limiting).
+- **WAF logging** delivered via Kinesis Data Firehose to Amazon S3. See [docs/waf.md](docs/waf.md).
 
 ## Repository Structure
 
@@ -77,6 +81,12 @@ flowchart LR
 ├── app/
 │   ├── Dockerfile              # Builds the container image with a custom landing page
 │   └── index.html              # Custom landing page served by Nginx
+│
+├── docs/
+│   └── waf.md                  # WAF design, Terraform, validation, and cost controls
+│
+├── infra/
+│   └── waf/                    # Terraform: WAF Web ACL, ALB association, Firehose->S3 logging
 │
 ├── k8s/
 │   ├── deployment.yaml         # Kubernetes Deployment (nginx) with image placeholder
@@ -223,7 +233,7 @@ kubectl delete ingress nginx-ingress -n project1
 
 Several enhancements can extend this project toward a full production-grade platform:
 
-- **Terraform IaC** for provisioning EKS, node groups, VPC resources, and ECR.
+- **Terraform IaC** (this repo currently demonstrates WAF + logging; cluster/VPC/ECR provisioning is intentionally out of scope for Project 1).
 - **GitOps with Argo CD or Flux** for continuous delivery based on repository state.
 - **Helm or Kustomize** for templated, reusable Kubernetes manifests.
 - **Observability stack** (Prometheus, Grafana, Loki) for metrics and logging.
@@ -237,4 +247,4 @@ These additions would align the project even more closely with enterprise DevOps
 
 ## Project Summary
 
-Built a full CI/CD pipeline that deploys a containerized web application to Amazon EKS using GitHub Actions, Amazon ECR, and Kubernetes best practices. The solution includes namespace isolation, automated image tagging, rolling updates, horizontal pod autoscaling (HPA), and optional HTTPS ingress through an AWS Application Load Balancer secured with ACM. This project demonstrates practical experience with cloud-based infrastructure, Kubernetes orchestration, deployment automation, and end-to-end delivery workflows commonly used in modern DevOps and platform engineering roles.
+Built a full CI/CD pipeline that deploys a containerized web application to Amazon EKS using GitHub Actions, Amazon ECR, and Kubernetes best practices. The solution includes namespace isolation, automated image tagging, rolling updates, horizontal pod autoscaling (HPA), and optional HTTPS ingress through an AWS Application Load Balancer secured with ACM. This project demonstrates practical experience with cloud-based infrastructure, Kubernetes orchestration, deployment automation, and end-to-end delivery workflows commonly used in modern DevOps and platform engineering roles. The project was later extended with AWS WAF protection at the ALB ingress, including managed security rules, rate limiting, and centralized access logging to Amazon S3.
